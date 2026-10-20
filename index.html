@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1017">
+  <meta name="description" content="Manage drift event drivers, qualifying points and tournament brackets.">
+  <title>Drift Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-backdrop" id="page-backdrop" aria-hidden="true"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Drift Control home">
+        <span class="brand-symbol">D</span>
+        <span class="brand-copy"><strong>DRIFT CONTROL</strong><small>EVENT MANAGER</small></span>
+      </a>
+      <div class="topbar-right">
+        <div class="sync-indicator" id="sync-indicator"><span class="sync-dot"></span><span id="sync-label">LOCAL</span></div>
+        <button class="topbar-button" type="button" data-action="open-settings">Settings</button>
+        <div id="auth-area"></div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="event-overview">
+        <div class="event-title-wrap">
+          <h1 id="event-name-display">DRIFT EVENT</h1>
+          <p><span class="event-live-dot"></span><span id="nav-live-label">LOCAL DATA</span></p>
+        </div>
+        <div class="event-summary" aria-label="Event overview">
+          <div><strong id="stat-drivers">00</strong><span>Drivers</span></div>
+          <div><strong id="stat-format">TOP 32</strong><span>Format</span></div>
+          <div><strong id="stat-champion">—</strong><span>Winner</span></div>
+        </div>
+      </section>
+
+      <nav class="section-nav" aria-label="Competition sections">
+        <button class="nav-tab active" data-action="tab" data-tab="drivers">Drivers</button>
+        <button class="nav-tab" data-action="tab" data-tab="qualifying">Qualifying points</button>
+        <button class="nav-tab" data-action="tab" data-tab="bracket">Bracket</button>
+        <span class="nav-event-count"><strong id="stat-battles">0</strong> battles decided</span>
+      </nav>
+
+      <section id="view-root" class="view-root" aria-live="polite"></section>
+    </main>
+
+    <footer class="site-footer"><span>DRIFT CONTROL</span><span>Driver list → Points → Bracket</span></footer>
+  </div>
+
+  <div id="modal-root"></div>
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
