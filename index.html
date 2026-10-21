@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a1017">
-  <meta name="description" content="Manage drift event drivers, qualifying points and tournament brackets.">
+  <meta name="description" content="Manage drift event drivers, Line/Style/Angle judging scores, qualifying results and tournament brackets.">
   <title>Drift Control</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -43,13 +43,14 @@
         <button class="nav-tab active" data-action="tab" data-tab="drivers">Drivers</button>
         <button class="nav-tab" data-action="tab" data-tab="qualifying">Qualifying points</button>
         <button class="nav-tab" data-action="tab" data-tab="bracket">Bracket</button>
+        <button class="nav-tab" id="judges-nav-tab" data-action="tab" data-tab="judges" hidden>Judges panel</button>
         <span class="nav-event-count"><strong id="stat-battles">0</strong> battles decided</span>
       </nav>
 
       <section id="view-root" class="view-root" aria-live="polite"></section>
     </main>
 
-    <footer class="site-footer"><span>DRIFT CONTROL</span><span>Driver list → Points → Bracket</span></footer>
+    <footer class="site-footer"><span>DRIFT CONTROL</span><span>Drivers → Judges → Results → Bracket</span></footer>
   </div>
 
   <div id="modal-root"></div>

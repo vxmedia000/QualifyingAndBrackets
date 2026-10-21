@@ -1,10 +1,11 @@
 # Drift Control — Drift event control
 
-A simple, responsive drift competition website built with static HTML, CSS and JavaScript. It is designed for GitHub Pages and keeps the event workflow in three clear steps:
+A simple, responsive drift competition website built with static HTML, CSS and JavaScript. It is designed for GitHub Pages and keeps the event workflow in four clear steps:
 
 1. **Drivers:** register each person and their car. Registration does not ask for points.
-2. **Qualifying:** later enter Run 1 and Run 2 points. Choose best run or average to rank the grid.
-3. **Bracket:** choose Top 8 / 12 / 16 / 24 / 32 / 48 / 64, generate a seeded bracket, and select battle winners. Stages are labelled Top 32 → Top 16 → Top 8 → Top 4 (depending on the selected format), followed by a Battle for 3rd and a Battle for 1st & 2nd.
+2. **Judges panel:** signed-in event staff enter Run 1 and Run 2 components for each driver: Line (maximum 60), Style (maximum 20), and Angle (maximum 20). Each run totals 100 points and only counts once all three component scores have been entered. Public viewers see the read-only score table, not the judges inputs.
+3. **Qualifying results:** view public score totals and rank the grid using best run or average.
+4. **Bracket:** choose Top 8 / 12 / 16 / 24 / 32 / 48 / 64, generate a seeded bracket, and select battle winners. Stages are labelled Top 32 → Top 16 → Top 8 → Top 4 (depending on the selected format), followed by a Battle for 3rd and a Battle for 1st & 2nd.
 
 Other features include a cleaner mobile-friendly layout, event settings, CSV export, live viewer mode with Supabase, and custom event backgrounds by image URL or file upload.
 
@@ -24,6 +25,8 @@ Then open `http://localhost:8000`.
 
 GitHub Pages only serves the frontend files; it does not provide a shared database. Supabase stores the event and broadcasts changes so public viewers can watch the same results and background.
 
+The judges panel uses the existing `drift_events.state` JSONB field, so **you do not need to rerun `schema.sql` for this judging-score update** if your Supabase setup is already working.
+
 1. Create a project at [Supabase](https://supabase.com/).
 2. Open **SQL Editor**, paste all of `schema.sql`, and run it. The script creates the shared event row, RLS policies, Realtime publication entry, a public-read `drift-backgrounds` bucket, and authenticated upload permission. It can be rerun to refresh the background storage policies.
 3. In **Authentication settings**, disable public sign-ups. Create an editor account in **Authentication → Users** for yourself and any trusted event staff.
@@ -37,6 +40,8 @@ GitHub Pages only serves the frontend files; it does not provide a shared databa
    ```
 
 5. Deploy to GitHub Pages using the steps below.
+
+**Only signed-in Supabase users see the Judges panel and score inputs.** Public visitors can read the published scores but have no UI or database permission to write event state. Keep new user sign-ups disabled and invite only trusted judges/editors.
 
 **Never put a Supabase `service_role` key or other secret key into `config.js`.** Browser publishable/anon keys are intended to be public; Row Level Security protects the event record, while Storage policies allow public image viewing but only authenticated image uploads.
 
@@ -79,13 +84,13 @@ Change it to `true` to seed a local preview with 32 fictional drivers if the loc
 - Select a format, then build the bracket once at least two drivers have qualifying points. Top 12 / 24 / 48 are supported and empty slots/byes are advanced automatically.
 - Click a driver's name in a ready battle to record the winner. That driver advances to the next stage. The semifinal losers automatically populate **Battle for 3rd**; the semifinal winners populate **Battle for 1st & 2nd**. If you change an earlier result, dependent results are cleared. The final winner is crowned champion.
 - To change bracket format or scoring after generating the bracket, reset the bracket first.
-- The CSV export includes rank, driver, car, both runs, qualifying score, and qualification status.
+- The CSV export includes rank, driver, car, Run 1/Run 2 Line, Style, Angle and totals, qualifying score, and qualification status.
 
 ## Files
 
 - `index.html` — site structure
 - `styles.css` — layout, background overlay, colors and animations
-- `app.js` — driver registration, qualifying, bracket logic, image upload, and sync
+- `app.js` — driver registration, judges panel and score limits, public results, bracket logic, image upload, and sync
 - `config.js` — Supabase public client configuration
 - `schema.sql` — shared event database, access policies, Realtime, and background storage
 

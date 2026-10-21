@@ -214,3 +214,30 @@ button { color: inherit; }
   .site-footer { font-size: 9px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* Judges panel and public read-only score presentation */
+.nav-tab[hidden] { display: none; }
+.results-table { min-width: 1010px; }
+.results-table td { vertical-align: middle; }
+.run-score-display { display: flex; flex-direction: column; gap: 4px; min-width: 158px; white-space: normal; }
+.run-score-display strong { font-size: 12px; line-height: 1.2; }
+.run-score-display small { max-width: 220px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.judge-limits { margin-top: -2px; }
+.judges-table { min-width: 1180px; }
+.judges-table th, .judges-table td { text-align: center; }
+.judges-table th:first-child, .judges-table td:first-child { text-align: left; }
+.judges-table .run-group-head { color: var(--accent); border-bottom: 1px solid var(--line); }
+.roster-table .judge-input { width: 76px; min-width: 65px; min-height: 34px; text-align: center; padding: 5px 6px; font-variant-numeric: tabular-nums; }
+.judge-driver { display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.judge-driver > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.judge-driver strong { font-size: 11px; white-space: normal; }
+.judge-driver small { color: var(--muted); font-size: 9px; white-space: normal; }
+.judge-driver em { margin-left: auto; color: var(--muted); font-size: 9px; font-style: normal; }
+.judge-total { min-width: 93px; font-variant-numeric: tabular-nums; }
+.judge-total strong { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.judge-total.is-scored strong { color: var(--accent); }
+@media (max-width: 680px) {
+  .results-table { min-width: 1010px; }
+  .judges-table { min-width: 1180px; }
+  .run-score-display { min-width: 150px; }
+}

@@ -2,11 +2,11 @@
   'use strict';
 
   const STORAGE_KEY = 'drift-control-state-v1';
+  const TAB_STORAGE_KEY = 'drift-control-active-tab-v1';
   const FORMATS = [8, 12, 16, 24, 32, 48, 64];
+  const JUDGE_LIMITS = { line: 60, style: 20, angle: 20 };
   // Developer-only sample tools. Set to true to expose the test roster and score generator.
   const ENABLE_TEST_TOOLS = false;
-  // Developer-only sync setup help. Keep false for the public website.
-  const ENABLE_SYNC_HELP = false;
   const TEST_DRIVERS = [
     ['Alex Mercer', 'Nissan Silvia S15'],
     ['Mia Kovacs', 'BMW E46'],
@@ -63,6 +63,12 @@
   let isRemoteReady = false;
   let lastLocalWriteAt = 0;
   let state = loadLocalState();
+  let activeTab = (() => {
+    try {
+      const saved = localStorage.getItem(TAB_STORAGE_KEY);
+      return ['drivers', 'qualifying', 'bracket', 'judges'].includes(saved) ? saved : (state.tab || 'drivers');
+    } catch (_) { return state.tab || 'drivers'; }
+  })();
   let renderQueued = false;
   let highlightedMatches = new Set();
   let highlightedWinnerMatch = '';
@@ -89,6 +95,30 @@
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeJudgeRun(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const valid = (component) => {
+      const number = numberOrNull(source[component]);
+      const max = JUDGE_LIMITS[component];
+      return number === null || number < 0 || number > max ? null : Number(number.toFixed(2));
+    };
+    return { line: valid('line'), style: valid('style'), angle: valid('angle') };
+  }
+
+  function hasAnyJudgeScore(scores) {
+    return Boolean(scores && Object.values(scores).some((value) => value !== null && value !== undefined));
+  }
+
+  function judgedRunTotal(driver, runNumber) {
+    const scores = driver && driver[`run${runNumber}Judging`];
+    if (!scores || !['line', 'style', 'angle'].every((component) => scores[component] !== null && scores[component] !== undefined)) return null;
+    return Number((scores.line + scores.style + scores.angle).toFixed(2));
+  }
+
+  function displayJudgeValue(value) {
+    return value === null || value === undefined ? '—' : formatScore(value);
   }
 
   function loadLocalState() {
@@ -121,21 +151,33 @@
     base.backgroundName = String(base.backgroundName || '').slice(0, 180);
     base.format = FORMATS.includes(Number(base.format)) ? Number(base.format) : 32;
     base.scoringMethod = base.scoringMethod === 'average' ? 'average' : 'best';
-    base.tab = ['drivers', 'qualifying', 'bracket'].includes(base.tab) ? base.tab : 'drivers';
+    base.tab = ['drivers', 'qualifying', 'bracket', 'judges'].includes(base.tab) ? base.tab : 'drivers';
     const savedDrivers = Array.isArray(base.drivers) ? base.drivers : [];
     const removedTestDriverIds = new Set(!ENABLE_TEST_TOOLS
       ? savedDrivers.filter((driver) => driver.isDemo).map((driver) => String(driver.id || ''))
       : []);
     base.drivers = savedDrivers
       .filter((driver) => ENABLE_TEST_TOOLS || !driver.isDemo)
-      .map((driver) => ({
-        id: String(driver.id || uid()),
-        name: String(driver.name || '').slice(0, 80),
-        car: String(driver.car || '').slice(0, 100),
-        run1: numberOrNull(driver.run1),
-        run2: numberOrNull(driver.run2),
-        isDemo: Boolean(driver.isDemo)
-      }));
+      .map((driver) => {
+        const normalized = {
+          id: String(driver.id || uid()),
+          name: String(driver.name || '').slice(0, 80),
+          car: String(driver.car || '').slice(0, 100),
+          run1: numberOrNull(driver.run1),
+          run2: numberOrNull(driver.run2),
+          run1Judging: normalizeJudgeRun(driver.run1Judging),
+          run2Judging: normalizeJudgeRun(driver.run2Judging),
+          isDemo: Boolean(driver.isDemo)
+        };
+        [1, 2].forEach((runNumber) => {
+          const components = normalized[`run${runNumber}Judging`];
+          const total = judgedRunTotal(normalized, runNumber);
+          if (total !== null) normalized[`run${runNumber}`] = total;
+          else if (hasAnyJudgeScore(components)) normalized[`run${runNumber}`] = null;
+          // If all component fields are empty, preserve an older total-only score for compatibility.
+        });
+        return normalized;
+      });
     if (base.bracket && Array.isArray(base.bracket.rounds)) {
       base.bracket = {
         size: Number(base.bracket.size) || 0,
@@ -489,10 +531,12 @@
   }
 
   function setTab(tab) {
-    if (!['drivers', 'qualifying', 'bracket'].includes(tab)) return;
-    state.tab = tab;
+    if (!['drivers', 'qualifying', 'bracket', 'judges'].includes(tab)) return;
+    if (tab === 'judges' && !canEdit()) return;
+    activeTab = tab;
+    try { localStorage.setItem(TAB_STORAGE_KEY, activeTab); } catch (_) { /* tab memory is optional */ }
+    // Navigation is per browser and is not written to the shared event row.
     render();
-    scheduleSave(false);
   }
 
   function setFormat(value) {
@@ -518,7 +562,7 @@
     if (state.drivers.some((driver) => driver.name.trim().toLowerCase() === name.toLowerCase())) {
       showToast('A driver with that name is already on the roster.', true); return;
     }
-    state.drivers.push({ id: uid(), name, car, run1: null, run2: null, isDemo: false });
+    state.drivers.push({ id: uid(), name, car, run1: null, run2: null, run1Judging: normalizeJudgeRun(null), run2Judging: normalizeJudgeRun(null), isDemo: false });
     form.reset();
     render();
     scheduleSave(true);
@@ -546,6 +590,8 @@
         car: sample.car,
         run1: null,
         run2: null,
+        run1Judging: normalizeJudgeRun(null),
+        run2Judging: normalizeJudgeRun(null),
         isDemo: true
       });
       existingNames.add(sample.name.toLowerCase());
@@ -579,8 +625,18 @@
       return;
     }
     demos.forEach((driver, index) => {
-      driver.run1 = Number((58 + ((index * 13) % 41) + ((index % 4) * 0.2)).toFixed(1));
-      driver.run2 = Number((56 + ((index * 17 + 5) % 43) + ((index % 3) * 0.3)).toFixed(1));
+      driver.run1Judging = {
+        line: Number((35 + ((index * 7) % 26)).toFixed(1)),
+        style: Number((12 + ((index * 3) % 9)).toFixed(1)),
+        angle: Number((12 + ((index * 5) % 9)).toFixed(1))
+      };
+      driver.run2Judging = {
+        line: Number((34 + ((index * 11 + 4) % 27)).toFixed(1)),
+        style: Number((11 + ((index * 7) % 10)).toFixed(1)),
+        angle: Number((11 + ((index * 3 + 2) % 10)).toFixed(1))
+      };
+      driver.run1 = judgedRunTotal(driver, 1);
+      driver.run2 = judgedRunTotal(driver, 2);
     });
     state.tab = 'qualifying';
     render();
@@ -615,6 +671,56 @@
     }
     render();
     scheduleSave(false);
+  }
+
+  function updateJudgeScore(driverId, runValue, component, value, inputElement = null) {
+    const driver = currentDriver(driverId);
+    const runNumber = Number(runValue);
+    if (!driver || ![1, 2].includes(runNumber) || !Object.prototype.hasOwnProperty.call(JUDGE_LIMITS, component)) return;
+    const judgingKey = `run${runNumber}Judging`;
+    if (!driver[judgingKey]) driver[judgingKey] = normalizeJudgeRun(null);
+    const restoreField = () => {
+      if (inputElement) {
+        const current = driver[judgingKey][component];
+        inputElement.value = current === null || current === undefined ? '' : String(current);
+      }
+    };
+    if (!canEdit()) {
+      showToast('Sign in with an editor account to enter judge scores.', true);
+      restoreField();
+      return;
+    }
+    if (state.bracket) {
+      showToast('Reset the active bracket before changing judge scores.', true);
+      restoreField();
+      return;
+    }
+    const max = JUDGE_LIMITS[component];
+    const parsed = numberOrNull(value);
+    if (parsed !== null && (parsed < 0 || parsed > max)) {
+      showToast(`${component.charAt(0).toUpperCase() + component.slice(1)} must be between 0 and ${max} points.`, true);
+      restoreField();
+      return;
+    }
+    driver[judgingKey][component] = parsed === null ? null : Number(parsed.toFixed(2));
+    // A run only earns a total when all three components have been entered.
+    // This prevents incomplete scores from affecting the public qualifying order.
+    driver[`run${runNumber}`] = judgedRunTotal(driver, runNumber);
+
+    // Update just the current row total rather than rebuilding the whole table.
+    // This keeps keyboard/tab-based score entry fast across a full driver grid.
+    const totalCell = Array.from(document.querySelectorAll('[data-judge-total]')).find((cell) =>
+      cell.dataset.driverId === driverId && cell.dataset.run === String(runNumber)
+    );
+    if (totalCell) {
+      const total = judgedRunTotal(driver, runNumber);
+      const hasAny = hasAnyJudgeScore(driver[judgingKey]);
+      const totalText = total !== null ? `${formatScore(total)} / 100` : (hasAny ? 'INCOMPLETE' : (driver[`run${runNumber}`] !== null ? `${formatScore(driver[`run${runNumber}`])} / 100*` : '— / 100'));
+      const strong = totalCell.querySelector('strong');
+      if (strong) strong.textContent = totalText;
+      totalCell.classList.toggle('is-scored', total !== null);
+    }
+    scheduleSave(true);
   }
 
   function removeDriver(driverId) {
@@ -852,10 +958,7 @@
     const area = document.getElementById('auth-area');
     if (!area) return;
     if (!cloudConfigured) {
-      // Do not expose setup instructions on the public site unless explicitly enabled.
-      area.innerHTML = ENABLE_SYNC_HELP
-        ? '<button class="auth-button" type="button" data-action="sync-help">SYNC SETUP ↗</button>'
-        : '';
+      area.innerHTML = '<button class="auth-button" type="button" data-action="sync-help">SYNC SETUP ↗</button>';
       return;
     }
     if (authSession && authSession.user) {
@@ -874,18 +977,22 @@
     document.getElementById('stat-battles').textContent = String(countResolvedMatches());
     document.getElementById('stat-format').textContent = `TOP ${state.format}`;
     document.getElementById('stat-champion').textContent = champion ? champion.name : '—';
+    const judgesTab = document.getElementById('judges-nav-tab');
+    if (judgesTab) judgesTab.hidden = !canEdit();
     document.querySelectorAll('.nav-tab').forEach((button) => {
-      button.classList.toggle('active', button.dataset.tab === state.tab);
+      button.classList.toggle('active', button.dataset.tab === activeTab);
     });
     updateConnectionStatus();
     renderAuthArea();
   }
 
   function render() {
+    if (activeTab === 'judges' && !canEdit()) activeTab = 'qualifying';
     renderStats();
     applyPageBackground();
-    if (state.tab === 'bracket') root.innerHTML = renderBracketView();
-    else if (state.tab === 'qualifying') root.innerHTML = renderQualifyingView();
+    if (activeTab === 'bracket') root.innerHTML = renderBracketView();
+    else if (activeTab === 'qualifying') root.innerHTML = renderQualifyingView();
+    else if (activeTab === 'judges' && canEdit()) root.innerHTML = renderJudgesView();
     else root.innerHTML = renderDriversView();
     attachNoListenersNeeded();
   }
@@ -928,6 +1035,20 @@
       </section>`;
   }
 
+  function runScoreDisplay(driver, runNumber) {
+    const scores = driver[`run${runNumber}Judging`] || normalizeJudgeRun(null);
+    const total = numberOrNull(driver[`run${runNumber}`]);
+    const hasComponents = hasAnyJudgeScore(scores);
+    const componentComplete = judgedRunTotal(driver, runNumber) !== null;
+    const detail = hasComponents
+      ? `LINE ${displayJudgeValue(scores.line)}/60 · STYLE ${displayJudgeValue(scores.style)}/20 · ANGLE ${displayJudgeValue(scores.angle)}/20`
+      : (total !== null ? 'TOTAL POINTS' : 'AWAITING JUDGES');
+    const mainValue = componentComplete || (total !== null && !hasComponents)
+      ? `${formatScore(total)} / 100`
+      : (hasComponents ? 'INCOMPLETE' : '—');
+    return `<div class="run-score-display"><strong class="${total !== null ? 'score-best' : 'muted-score'}">${mainValue}</strong><small>${detail}</small></div>`;
+  }
+
   function renderQualifyingView() {
     const editors = canEdit();
     const ranked = getRankedDrivers();
@@ -945,14 +1066,12 @@
       const status = !scored ? '<span class="status-chip">AWAITING POINTS</span>' : onCut
         ? `<span class="status-chip good">IN TOP ${state.format}</span>`
         : '<span class="status-chip out">OUTSIDE CUT</span>';
-      const lockedAttr = editors ? '' : ' disabled';
-      const bracketLock = state.bracket && state.bracket.seededDriverIds.includes(driver.id);
       return `<tr class="${scored && !onCut ? 'is-cut' : ''}">
         <td><span class="seed-number ${onCut ? 'seed-qualifier' : ''}">${rank ? String(rank).padStart(2, '0') : '—'}</span></td>
         <td><div class="driver-cell"><span class="driver-avatar">${escapeHtml(driverInitial(driver.name))}</span><div><strong>${escapeHtml(driver.name)}</strong></div></div></td>
         <td>${escapeHtml(driver.car || '—')}</td>
-        <td><input class="table-input" aria-label="${escapeHtml(driver.name)} Run 1 points" type="number" min="0" step="0.1" placeholder="—" data-driver-id="${escapeHtml(driver.id)}" data-field="run1" value="${driver.run1 === null ? '' : escapeHtml(driver.run1)}"${lockedAttr}></td>
-        <td><input class="table-input" aria-label="${escapeHtml(driver.name)} Run 2 points" type="number" min="0" step="0.1" placeholder="—" data-driver-id="${escapeHtml(driver.id)}" data-field="run2" value="${driver.run2 === null ? '' : escapeHtml(driver.run2)}"${lockedAttr}></td>
+        <td>${runScoreDisplay(driver, 1)}</td>
+        <td>${runScoreDisplay(driver, 2)}</td>
         <td><span class="${scored ? 'score-best' : 'muted-score'}">${formatScore(driverScore(driver))}</span></td>
         <td>${status}</td>
       </tr>`;
@@ -961,22 +1080,65 @@
 
     return `
       <div class="view-heading">
-        <div><h2>Qualifying points</h2><p>Enter each driver’s Run 1 and Run 2 here, after the entry list is ready.</p></div>
-        <div class="heading-actions">${ENABLE_TEST_TOOLS && editors && state.drivers.some((driver) => driver.isDemo) ? '<button class="button" type="button" data-action="fill-test-points"' + (state.bracket ? ' disabled title="Reset the bracket before changing qualifying points"' : '') + '>Fill test points</button>' : ''}<button class="button" type="button" data-action="export-csv">↓ Export CSV</button><button class="button acid" type="button" data-action="build-bracket"${editors ? '' : ' disabled'}>${state.bracket ? 'Rebuild bracket' : 'Build bracket →'}</button></div>
+        <div><h2>Qualifying results</h2><p>Public score table. Each run is scored out of 100: Line 60, Style 20 and Angle 20.</p></div>
+        <div class="heading-actions"><button class="button" type="button" data-action="export-csv">↓ Export CSV</button>${editors ? `<button class="button acid" type="button" data-action="tab" data-tab="judges">Open judges panel →</button><button class="button" type="button" data-action="build-bracket">${state.bracket ? 'Rebuild bracket' : 'Build bracket →'}</button>` : ''}</div>
       </div>
-      <div class="qual-toolbar">
+      ${editors ? `<div class="qual-toolbar">
         <span class="toolbar-label">BRACKET FORMAT</span>
-        <select id="format-select" class="inline-select" data-action="format-select" aria-label="Bracket format"${editors && !state.bracket ? '' : ' disabled'}>${FORMATS.map((format) => `<option value="${format}"${state.format === format ? ' selected' : ''}>Top ${format}</option>`).join('')}</select>
-        <span class="toolbar-label">SCORING</span>
-        <select id="scoring-select" class="inline-select" data-action="scoring-select" aria-label="Qualifying scoring rule"${editors && !state.bracket ? '' : ' disabled'}><option value="best"${state.scoringMethod === 'best' ? ' selected' : ''}>Best run</option><option value="average"${state.scoringMethod === 'average' ? ' selected' : ''}>Average</option></select>
-        <span class="toolbar-spacer"></span>
-        <span class="panel-tag">${scoredCount} SCORED / ${state.drivers.length} REGISTERED</span>
-      </div>
+        <select id="format-select" class="inline-select" data-action="format-select" aria-label="Bracket format"${!state.bracket ? '' : ' disabled'}>${FORMATS.map((format) => `<option value="${format}"${state.format === format ? ' selected' : ''}>Top ${format}</option>`).join('')}</select>
+        <span class="toolbar-label">RANKING</span>
+        <select id="scoring-select" class="inline-select" data-action="scoring-select" aria-label="Qualifying scoring rule"${!state.bracket ? '' : ' disabled'}><option value="best"${state.scoringMethod === 'best' ? ' selected' : ''}>Best run</option><option value="average"${state.scoringMethod === 'average' ? ' selected' : ''}>Average</option></select>
+        <span class="toolbar-spacer"></span><span class="panel-tag">${scoredCount} SCORED / ${state.drivers.length} REGISTERED</span>
+      </div>` : `<div class="qual-toolbar"><span class="toolbar-label">BRACKET FORMAT</span><span class="panel-tag">TOP ${state.format}</span><span class="toolbar-spacer"></span><span class="panel-tag">${scoredCount} SCORED / ${state.drivers.length} REGISTERED</span></div>`}
       <section class="panel">
-        <div class="panel-heading"><div><h3>Run results</h3><p>${state.scoringMethod === 'best' ? 'Best of Run 1 and Run 2' : 'Average of entered runs'} · higher points rank first.</p></div><span class="panel-tag">TOP ${state.format} CUT</span></div>
-        <div class="table-meta"><span><strong>${state.drivers.length}</strong> registered drivers</span><span>Enter points here — driver details stay in Drivers</span></div>
-        ${sortedDrivers.length ? `<div class="table-scroll"><table class="roster-table"><thead><tr><th>RANK</th><th>DRIVER</th><th>CAR</th><th>RUN 1 POINTS</th><th>RUN 2 POINTS</th><th>QUAL SCORE</th><th>STATUS</th></tr></thead><tbody>${rowMarkup}</tbody></table></div>` : `<div class="empty-table"><div class="empty-symbol">02</div><strong>Register drivers first</strong><p>Your driver list is empty. Add drivers in the first step, then come back here to enter their qualifying points.</p><button class="button acid" type="button" data-action="tab" data-tab="drivers">Go to Drivers →</button></div>`}
+        <div class="panel-heading"><div><h3>Drivers &amp; points</h3><p>Viewers can see the awarded points here. Only signed-in users can open the Judges panel to enter them.</p></div><span class="panel-tag">TOP ${state.format} CUT</span></div>
+        <div class="table-meta"><span><strong>${state.drivers.length}</strong> registered drivers</span><span>Higher qualifying score ranks first · ${state.scoringMethod === 'best' ? 'Best of both runs' : 'Average of both runs'}</span></div>
+        ${sortedDrivers.length ? `<div class="table-scroll"><table class="roster-table results-table"><thead><tr><th>RANK</th><th>DRIVER</th><th>CAR</th><th>RUN 1 · /100</th><th>RUN 2 · /100</th><th>QUAL SCORE</th><th>STATUS</th></tr></thead><tbody>${rowMarkup}</tbody></table></div>` : `<div class="empty-table"><div class="empty-symbol">02</div><strong>Register drivers first</strong><p>Your driver list is empty. Add drivers in the Drivers tab, then judges can score each run.</p><button class="button acid" type="button" data-action="tab" data-tab="drivers">Go to Drivers →</button></div>`}
         ${state.bracket ? '<div class="readonly-note"><span>BRACKET SEEDED</span> — score edits do not automatically reseed active battles. Reset and rebuild the bracket to apply updated qualifying results.</div>' : ''}
+      </section>`;
+  }
+
+  function judgeScoreInput(driver, runNumber, component) {
+    const scores = driver[`run${runNumber}Judging`] || normalizeJudgeRun(null);
+    const value = scores[component];
+    const max = JUDGE_LIMITS[component];
+    const disabled = state.bracket ? ' disabled title="Reset the active bracket before editing judging scores"' : '';
+    return `<input class="table-input judge-input" type="number" inputmode="decimal" min="0" max="${max}" step="0.1" placeholder="—" aria-label="${escapeHtml(driver.name)} Run ${runNumber} ${component}" data-judge-score data-driver-id="${escapeHtml(driver.id)}" data-run="${runNumber}" data-component="${component}" value="${value === null ? '' : escapeHtml(value)}"${disabled}>`;
+  }
+
+  function judgingTotalCell(driver, runNumber) {
+    const total = judgedRunTotal(driver, runNumber);
+    const scores = driver[`run${runNumber}Judging`] || normalizeJudgeRun(null);
+    const any = hasAnyJudgeScore(scores);
+    const legacyTotal = numberOrNull(driver[`run${runNumber}`]);
+    const content = total !== null ? `${formatScore(total)} / 100` : (any ? 'INCOMPLETE' : (legacyTotal !== null ? `${formatScore(legacyTotal)} / 100*` : '— / 100'));
+    return `<td class="judge-total ${total !== null ? 'is-scored' : ''}" data-judge-total data-driver-id="${escapeHtml(driver.id)}" data-run="${runNumber}"${legacyTotal !== null && !any && total === null ? ' title="Existing total-only score; enter all three judging components to replace it"' : ''}><strong>${content}</strong></td>`;
+  }
+
+  function renderJudgesView() {
+    if (!canEdit()) {
+      activeTab = 'qualifying';
+      return renderQualifyingView();
+    }
+    const drivers = state.drivers;
+    const rows = drivers.map((driver, index) => `<tr>
+      <td><div class="judge-driver"><span class="driver-avatar">${escapeHtml(driverInitial(driver.name))}</span><div><strong>${escapeHtml(driver.name)}</strong><small>${escapeHtml(driver.car || '—')}</small></div><em>${String(index + 1).padStart(2, '0')}</em></div></td>
+      ${['line', 'style', 'angle'].map((component) => `<td>${judgeScoreInput(driver, 1, component)}</td>`).join('')}
+      ${judgingTotalCell(driver, 1)}
+      ${['line', 'style', 'angle'].map((component) => `<td>${judgeScoreInput(driver, 2, component)}</td>`).join('')}
+      ${judgingTotalCell(driver, 2)}
+    </tr>`).join('');
+    return `
+      <div class="view-heading">
+        <div><h2>Judges panel</h2><p>Enter points for each driver and run. A run counts toward qualifying only when Line, Style and Angle are all entered.</p></div>
+        <div class="heading-actions"><span class="status-chip">EDITOR ACCESS</span><button class="button" type="button" data-action="tab" data-tab="qualifying">View public results →</button></div>
+      </div>
+      <div class="qual-toolbar judge-limits"><span class="toolbar-label">MAXIMUM PER RUN</span><span class="panel-tag">LINE 60</span><span class="panel-tag">STYLE 20</span><span class="panel-tag">ANGLE 20</span><span class="panel-tag">TOTAL 100</span><span class="toolbar-spacer"></span><span class="panel-tag">${drivers.length} DRIVERS</span></div>
+      <section class="panel">
+        <div class="panel-heading"><div><h3>Scoring sheet</h3><p>Scores autosave and appear in the public results table after each complete run.</p></div><span class="panel-tag">RUN 1 + RUN 2</span></div>
+        ${drivers.length ? `<div class="table-scroll"><table class="roster-table judges-table"><thead><tr><th rowspan="2">DRIVER</th><th colspan="4" class="run-group-head">RUN 1 · MAX 100</th><th colspan="4" class="run-group-head">RUN 2 · MAX 100</th></tr><tr><th>LINE /60</th><th>STYLE /20</th><th>ANGLE /20</th><th>TOTAL</th><th>LINE /60</th><th>STYLE /20</th><th>ANGLE /20</th><th>TOTAL</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty-table"><strong>No drivers registered yet</strong><p>Register the full grid first. The drivers will appear here automatically.</p><button class="button acid" type="button" data-action="tab" data-tab="drivers">Register drivers →</button></div>`}
+        <div class="table-meta"><span>Empty fields mean the run is not yet complete.</span><span>All scores are limited to their category maximum.</span></div>
+        ${state.bracket ? '<div class="readonly-note"><span>BRACKET ACTIVE</span> — reset the bracket before editing qualifying scores, then rebuild it to apply changes.</div>' : ''}
       </section>`;
   }
 
@@ -1095,7 +1257,6 @@
   }
 
   function openSyncHelp() {
-    if (!ENABLE_SYNC_HELP) return;
     modalRoot.innerHTML = `
       <div class="modal-backdrop" data-action="close-modal-background">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="sync-help-title">
@@ -1134,13 +1295,14 @@
     if (!supabaseClient) return;
     await supabaseClient.auth.signOut();
     authSession = null;
-    render();
+    if (activeTab === 'judges') setTab('qualifying');
+    else render();
     showToast('Signed out. The bracket remains visible in viewer mode.');
   }
 
   function exportCsv() {
     const ranked = getRankedDrivers();
-    const rows = [['Rank', 'Driver', 'Car', 'Run 1', 'Run 2', 'Qualifying Score', 'Status']];
+    const rows = [['Rank', 'Driver', 'Car', 'Run 1 Line', 'Run 1 Style', 'Run 1 Angle', 'Run 1 Total', 'Run 2 Line', 'Run 2 Style', 'Run 2 Angle', 'Run 2 Total', 'Qualifying Score', 'Status']];
     const rankMap = new Map(ranked.map((item, index) => [item.driver.id, index + 1]));
     [...state.drivers].sort((a, b) => {
       const ar = rankMap.get(a.id) || Number.POSITIVE_INFINITY;
@@ -1149,7 +1311,9 @@
     }).forEach((driver) => {
       const rank = rankMap.get(driver.id) || '';
       const qualified = rank && rank <= state.format;
-      rows.push([rank, driver.name, driver.car, driver.run1 ?? '', driver.run2 ?? '', driverScore(driver) ?? '', !rank ? 'NO SCORE' : qualified ? 'QUALIFIED' : 'OUTSIDE CUT']);
+      const run1 = driver.run1Judging || normalizeJudgeRun(null);
+      const run2 = driver.run2Judging || normalizeJudgeRun(null);
+      rows.push([rank, driver.name, driver.car, run1.line ?? '', run1.style ?? '', run1.angle ?? '', driver.run1 ?? '', run2.line ?? '', run2.style ?? '', run2.angle ?? '', driver.run2 ?? '', driverScore(driver) ?? '', !rank ? 'NO SCORE' : qualified ? 'QUALIFIED' : 'OUTSIDE CUT']);
     });
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1191,7 +1355,7 @@
     else if (action === 'go-qualifying') setTab('qualifying');
     else if (action === 'login') openLoginModal();
     else if (action === 'logout') logout();
-    else if (action === 'sync-help' && ENABLE_SYNC_HELP) openSyncHelp();
+    else if (action === 'sync-help') openSyncHelp();
     else if (action === 'close-modal') modalRoot.innerHTML = '';
     else if (action === 'focus-add') {
       const input = document.getElementById('driver-name');
@@ -1202,7 +1366,9 @@
 
   document.addEventListener('change', (event) => {
     const target = event.target;
-    if (target.matches('[data-driver-id][data-field]')) {
+    if (target.matches('[data-judge-score]')) {
+      updateJudgeScore(target.dataset.driverId, target.dataset.run, target.dataset.component, target.value, target);
+    } else if (target.matches('[data-driver-id][data-field]')) {
       updateDriverField(target.dataset.driverId, target.dataset.field, target.value);
     } else if (target.matches('[data-action="format-select"]')) {
       if (!canEdit()) return;
@@ -1252,6 +1418,7 @@
       await loadRemoteState();
       const { data: subscription } = supabaseClient.auth.onAuthStateChange((_event, session) => {
         authSession = session;
+        if (!session && activeTab === 'judges') activeTab = 'qualifying';
         render();
       });
       // Hold the subscription object to keep the listener referenced during this page's lifetime.
@@ -1299,6 +1466,8 @@
       car: sample.car,
       run1: null,
       run2: null,
+      run1Judging: normalizeJudgeRun(null),
+      run2Judging: normalizeJudgeRun(null),
       isDemo: true
     }));
     persistLocal();
